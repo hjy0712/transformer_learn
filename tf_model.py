@@ -111,10 +111,3 @@ class MultiHeadAttention(nn.Module):
 # print(attention_output.shape) # torch.Size([5, 100, 512])
 # ------------------------------------------------
 
-## 3. 前馈网络。处理信息和从输入序列中提取特征
-class FeedForward(nn.Module):
-    def __init__(self, d_model, d_ff):
-        super(FeedForward, self).init()
-        self.linear1 = nn.Linear(d_model, d_ff)
-        self.linear2 = nn.Linear(d_ff, d_model)
-        self.relu = nn.ReLU()
