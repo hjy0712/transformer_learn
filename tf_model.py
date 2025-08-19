@@ -14,7 +14,7 @@ class PositionalEncoding(nn.Module):
         # 计算位置编码
         pe = torch.zeros(max_len,d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1) # torch.Size([5000, 1]) 将形状从 [max_len] 变为 [max_len, 1]
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model)) # 不同维度上正弦波的频率。1/10000^(2i/d_model)。torch.arange(0, d_model, 2) 创建偶数序列。
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model)) # 不同维度上正弦波的频率。e^(-2i * ln(10000) / d_model) = 1/10000^(2i/d_model)。torch.arange(0, d_model, 2) 创建偶数序列。
         pe[:, 0::2] = torch.sin(position * div_term) # 偶数位置使用正弦函数
         pe[:, 1::2] = torch.cos(position * div_term) # 奇数位置使用余弦函数
         pe = pe.unsqueeze(0) # 添加一个维度，变成 [1, max_len, d_model]
@@ -76,7 +76,7 @@ class MultiHeadAttention(nn.Module):
         # 拆分头
         query = self.split_heads(query)
         key = self.split_heads(key)
-        value = self.split_heads(value) # [batch_size, num_heads, seq_len, head_dim] torch.Size([5, 8, 100, 64])  相当于把特征维度拆成8*64
+        value = self.split_heads(value) # [batch_size, num_heads, seq_len, head_dim] torch.Size([5, 8, 100, 64])  相当于把特征维度512拆成8*64
 
         # 计算注意力分数。矩阵乘法规则：保留前面的维度，最后两个维度进行矩阵乘法
         scores = torch.matmul(query, key.transpose(-2,-1)) / math.sqrt(self.head_dim) # [batch_size, num_heads, seq_len, seq_len] 如果不是多头注意力，维度是[batch_size, seq_len, seq_len]
@@ -141,4 +141,43 @@ class FeedForward(nn.Module):
 # ff_output = ff_network(attn_output)
 
 # print(ff_output.shape) # torch.Size([5, 100, 512])
+# ------------------------------------------------
+
+## 4. 编码器层
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+        super(EncoderLayer, self).__init__()
+        self.self_attention = MultiHeadAttention(d_model, num_heads)
+        self.feed_forward = FeedForward(d_model, d_ff)
+        self.norm1 = nn.LayerNorm(d_model)  # LayerNorm 的计算公式：y = γ * (x - μ) / σ + β。γ和β是可学习的参数，μ和σ是均值和标准差。
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout) # 训练时：随机丢弃一些神经元。测试时：使用所有神经元，但缩放输出。使得模型不能过度依赖某些特定的神经元，从而学习更鲁棒的特征表示
+
+    def forward(self, x, mask):
+
+        # 自注意力层
+        attention_output = self.self_attention(x, x, x, mask)
+        attention_output = self.dropout(attention_output)
+        x = x + attention_output
+        x = self.norm1(x)
+
+        # 前馈网络层
+        ff_output = self.feed_forward(x)
+        ff_output = self.dropout(ff_output)
+        x = x + ff_output
+        x = self.norm2(x)
+        return x
+
+# ------------------测试编码器层-------------------
+d_model = 512
+max_len = 100
+num_heads = 8
+d_ff = 2048
+
+encoder_layer = EncoderLayer(d_model, num_heads, d_ff)
+
+input_sequence = torch.randn(5, max_len, d_model)
+
+encoder_output = encoder_layer(input_sequence, None)
+print(encoder_output.shape) # torch.Size([5, 100, 512])
 # ------------------------------------------------
