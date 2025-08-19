@@ -217,20 +217,103 @@ class DecoderLayer(nn.Module):
         return x
 
 # ------------------测试解码器层-------------------
+# d_model = 512
+# max_len = 100
+# num_heads = 8
+# d_ff = 2048
+# dropout = 0.1
+
+# decoder_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
+
+# src_mask = torch.randn(1, max_len, max_len) > 0.5
+# tgt_mask = torch.tril(torch.ones(max_len, max_len)).unsqueeze(0) == 0 # 因果掩码，下三角矩阵之后在第一维添加维度
+
+# input_sequence = torch.randn(1, max_len, d_model)
+# encoder_output = torch.randn(1, max_len, d_model)
+
+# decoder_output = decoder_layer(input_sequence, encoder_output, src_mask, tgt_mask)
+# print(decoder_output.shape) # torch.Size([5, 100, 512])
+# ------------------------------------------------
+
+## 6. 完整transformer模型
+class Transformer(nn.Module):
+    def __init__(self, src_vocab_size, tgt_vocab_size, d_model, num_heads, d_ff, num_layers, max_len, dropout=0.1):
+        super(Transformer, self).__init__()
+
+        # 定义编码器和解码器的词嵌入层。相当于查找表，将词索引数字换为词嵌入
+        self.encoder_embedding = nn.Embedding(src_vocab_size, d_model) # 词汇表大小 词嵌入维度
+        self.decoder_embedding = nn.Embedding(tgt_vocab_size, d_model)
+
+        # 定义位置编码
+        self.positional_encoding = PositionalEncoding(d_model, max_len)
+
+        # 定义编码器和解码器
+        self.encoder_layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
+        self.decoder_layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
+
+        # 定义输出层
+        self.output_linear = nn.Linear(d_model, tgt_vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def generate_mask(self, src, tgt): # 不关注序列中的pad部分，使不想要的地方softmax值为0
+        # 源端掩码（padding mask） [batch_size, 1, 1, src_len] 方便在 注意力矩阵 [batch_size, heads, query_len, key_len] 上进行广播
+        src_mask = (src != 0).unsqueeze(1).unsqueeze(2)
+
+        # 目标端掩码（padding mask） [batch_size, 1, tgt_len, 1] 方便在 decoder的key/value [batch_size, heads, tgt_len, tgt_len]上进行广播
+        tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
+
+        # 目标端 no-peak 掩码（未来信息屏蔽）
+        seq_length = tgt.size(1)
+        nopeak_mask = (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1)).bool() # 右下三角矩阵，不能看到未来信息
+
+        # 综合目标端掩码
+        tgt_mask = tgt_mask & nopeak_mask
+
+        return src_mask, tgt_mask
+
+
+    def forward(self, src, tgt):
+        src_mask, tgt_mask = self.generate_mask(src, tgt)
+
+        # 解码器输入预处理：输入的词转换为词嵌入，并进行位置编码
+        encoder_embedding = self.encoder_embedding(src)
+        encoder_embedding = self.positional_encoding(encoder_embedding)
+        src_embedding = self.dropout(encoder_embedding)
+
+        # 编码器输入预处理：输入的词转换为词嵌入，并进行位置编码
+        decoder_embedding = self.decoder_embedding(tgt)
+        decoder_embedding = self.positional_encoding(decoder_embedding)
+        tgt_embedding = self.dropout(decoder_embedding)
+
+        # 输入到编码器
+        encoder_output = src_embedding
+        for enc_layer in self.encoder_layers:
+            encoder_output = enc_layer(encoder_output, src_mask)
+
+        # 输入到解码器
+        decoder_output = tgt_embedding
+        for dec_layer in self.decoder_layers:
+            decoder_output = dec_layer(decoder_output, encoder_output, src_mask, tgt_mask)
+
+        # 输出层
+        output = self.output_linear(decoder_output)
+        return output
+
+# ------------------测试 整体transformer-------------------
+src_vocab_size = 5000
+tgt_vocab_size = 5000
 d_model = 512
 max_len = 100
 num_heads = 8
+num_layers = 6
 d_ff = 2048
 dropout = 0.1
 
-decoder_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
+transformer = Transformer(src_vocab_size, tgt_vocab_size, d_model, num_heads, d_ff, num_layers, max_len, dropout)
 
-src_mask = torch.randn(1, max_len, max_len) > 0.5
-tgt_mask = torch.tril(torch.ones(max_len, max_len)).unsqueeze(0) == 0 # 因果掩码，下三角矩阵之后在第一维添加维度
+src_data = torch.randint(1, src_vocab_size, (5, max_len)) # (batch_size, seq_length)
+tgt_data = torch.randint(1, tgt_vocab_size, (5, max_len))
 
-input_sequence = torch.randn(1, max_len, d_model)
-encoder_output = torch.randn(1, max_len, d_model)
-
-decoder_output = decoder_layer(input_sequence, encoder_output, src_mask, tgt_mask)
-print(decoder_output.shape) # torch.Size([5, 100, 512])
+tf_out = transformer(src_data, tgt_data[:, :])
+print(tf_out.shape) # torch.Size([5, 99, 5000])
 # ------------------------------------------------
